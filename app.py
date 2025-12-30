@@ -11,10 +11,11 @@ import easyocr
 # 페이지 설정
 st.set_page_config(page_title="Sketch to DXF Pro", layout="wide")
 
-# 1. 메모리 세이프 OCR 로더
+# 1. 메모리 세이프 OCR 로더 (서버 다운 방지)
 @st.cache_resource
 def load_ocr_reader():
     try:
+        # gpu=False로 CPU 메모리 점유율 최소화
         return easyocr.Reader(['en'], gpu=False, download_enabled=True)
     except Exception as e:
         st.warning(f"OCR 엔진 로딩 지연 중: {e}")
@@ -155,11 +156,8 @@ if uploaded:
     bytes_data = uploaded.read()
     col1, col2 = st.columns(2)
     
-    # st.image 에러 방지를 위한 호환성 처리
-    try:
-        col1.image(bytes_data, caption="원본 이미지", use_container_width=True)
-    except TypeError:
-        col1.image(bytes_data, caption="원본 이미지", use_column_width=True)
+    # [에러 해결 지점] 파라미터를 use_column_width=True 로 고정하여 호환성 확보
+    col1.image(bytes_data, caption="원본 이미지", use_column_width=True)
 
     with st.spinner("AI 분석 및 수정 반영 중..."):
         res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_val, user_comment)
