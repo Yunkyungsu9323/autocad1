@@ -1,5 +1,7 @@
 streamlit
 numpy
-plotly
+opencv-contrib-python
+easyocr
+torch
 ezdxf
-opencv-python-headless
+plotly
