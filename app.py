@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import tempfile
 import os
 import easyocr
+import math
 
 # 페이지 설정
 st.set_page_config(page_title="Sketch to DXF Pro", layout="wide")
@@ -36,6 +37,8 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     f_val = 200 if user_cmd == "잡티 제거" else filter_strength
     s_val = 50 if user_cmd == "선 연결" else snap_size
     e_val = 0.040 if user_cmd == "직각 보정" else epsilon_adj
+    # 벽 두께 옵션 (기본 150mm 설정)
+    wall_thickness = 150 if user_cmd == "벽체 두께" else 0
 
     # 전처리
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
@@ -59,7 +62,7 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
                 detected_texts.append({'text': text, 'x': cx, 'y': cy, 'h': (pts[2][1]-pts[0][1])*scale})
         except: pass
 
-    # 벡터화
+    # 벡터화 및 DXF 생성
     contours, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
@@ -77,14 +80,36 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
             for i in range(len(pts)-1):
                 p1, p2 = pts[i], pts[i+1]
                 if p1 == p2: continue
-                msp.add_line((p1[0], p1[1], 0), (p2[0], p2[1], 0))
-                if enable_3d:
-                    msp.add_line((p1[0], p1[1], wall_height_mm), (p2[0], p2[1], wall_height_mm))
-                    px.extend([p1[0], p2[0], p2[0], p1[0], p1[0], None])
-                    py.extend([p1[1], p2[1], p2[1], p1[1], p1[1], None])
-                    pz.extend([0, 0, wall_height_mm, wall_height_mm, 0, None])
-                else:
-                    px.extend([p1[0], p2[0], None]); py.extend([p1[1], p2[1], None]); pz.extend([0, 0, None])
+                
+                # --- [벽체 두께 생성 로직 추가] ---
+                lines_to_draw = [(p1, p2)] # 기본은 단선
+                
+                if wall_thickness > 0:
+                    dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+                    dist = math.sqrt(dx**2 + dy**2)
+                    if dist > 0:
+                        nx, ny = -dy/dist, dx/dist # 수직 벡터 계산
+                        off = wall_thickness / 2
+                        # 양옆으로 오프셋된 두 개의 선분 생성
+                        pair1 = ((p1[0] + nx*off, p1[1] + ny*off), (p2[0] + nx*off, p2[1] + ny*off))
+                        pair2 = ((p1[0] - nx*off, p1[1] - ny*off), (p2[0] - nx*off, p2[1] - ny*off))
+                        lines_to_draw = [pair1, pair2]
+
+                # 선 그리기 (단선 또는 복선)
+                for start, end in lines_to_draw:
+                    msp.add_line((start[0], start[1], 0), (end[0], end[1], 0))
+                    
+                    if enable_3d:
+                        # 3D 벽체 및 천장선 (기존 로직 유지)
+                        msp.add_line((start[0], start[1], wall_height_mm), (end[0], end[1], wall_height_mm))
+                        # 시각화용 데이터 (Plotly)
+                        px.extend([start[0], end[0], end[0], start[0], start[0], None])
+                        py.extend([start[1], end[1], end[1], start[1], start[1], None])
+                        pz.extend([0, 0, wall_height_mm, wall_height_mm, 0, None])
+                    else:
+                        px.extend([start[0], end[0], None])
+                        py.extend([start[1], end[1], None])
+                        pz.extend([0, 0, None])
 
     for dt in detected_texts:
         t = msp.add_text(dt['text'], dxfattribs={'height': dt['h']*0.8})
@@ -92,7 +117,7 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
 
     return doc, px, py, pz
 
-# --- UI ---
+# --- UI (사용자님이 보내준 레이아웃 그대로 유지) ---
 with st.sidebar:
     st.header("⚙️ 설정")
     enable_3d = st.checkbox("🏗️ 3D 모드", value=True)
@@ -107,7 +132,11 @@ with st.sidebar:
         if st.button("🔗 선 연결", use_container_width=True): st.session_state.cmd = "선 연결"
     with c2:
         if st.button("🧹 잡티 제거", use_container_width=True): st.session_state.cmd = "잡티 제거"
+        # 새로운 벽체 두께 버튼 추가
+        if st.button("🧱 벽체 두께", use_container_width=True): st.session_state.cmd = "벽체 두께"
         if st.button("🔄 초기화", use_container_width=True): st.session_state.cmd = "일반"
+    
+    st.write(f"현재 활성 모드: **{st.session_state.cmd}**")
     
     st.divider()
     f_val = st.slider("인식 민감도", 50, 255, 160)
@@ -119,13 +148,12 @@ uploaded = st.file_uploader("이미지 업로드", type=['png', 'jpg', 'jpeg'])
 
 if uploaded:
     data = uploaded.read()
-    with st.spinner("AI 엔진 가동 중..."):
+    with st.spinner(f"AI 엔진 가동 중 ({st.session_state.cmd})..."):
         res = process_sketch_pro(data, real_w, wall_h, snap, eps, enable_3d, f_val, st.session_state.cmd)
         if res:
             doc, px, py, pz = res
             col1, col2 = st.columns(2)
             with col1:
-                # 에러 해결 포인트: use_container_width 대신 use_column_width 사용
                 st.image(data, caption="원본 이미지", use_column_width=True)
             with col2:
                 fig = go.Figure(go.Scatter3d(x=px, y=py, z=pz, mode='lines', line=dict(color='#00ffcc', width=2)))
