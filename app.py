@@ -11,11 +11,10 @@ import easyocr
 # 페이지 설정
 st.set_page_config(page_title="Sketch to DXF Pro", layout="wide")
 
-# 1. 메모리 세이프 OCR 로더 (서버 다운 방지)
+# 1. 메모리 세이프 OCR 로더
 @st.cache_resource
 def load_ocr_reader():
     try:
-        # gpu=False로 CPU 메모리 점유율 최소화
         return easyocr.Reader(['en'], gpu=False, download_enabled=True)
     except Exception as e:
         st.warning(f"OCR 엔진 로딩 지연 중: {e}")
@@ -32,7 +31,7 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     # [수정 요청 반영: 스케일 조정]
     final_scale = real_width_mm / w if real_width_mm > 0 else 1.0
     if "배 키워" in user_instruction or "배 크게" in user_instruction:
-        final_scale *= 1.2  # 기본 1.2배 확대
+        final_scale *= 1.2
 
     # 2. 스마트 컬러 필터 (격자무늬 제거)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
@@ -78,7 +77,7 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     plot_x, plot_y, plot_z = [], [], []
     v_columns = set()
 
-    # [수정 요청 반영: 직각 보정 모드 체크]
+    # [수정 요청 반영: 직각 보정]
     ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯하게", "똑바로"])
 
     def get_snap(pt):
@@ -100,11 +99,10 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
                 if ortho_mode:
                     dx = abs(p1[0] - p2[0])
                     dy = abs(p1[1] - p2[1])
-                    if dx > dy: p2 = (p2[0], p1[1]) # 가로선으로 보정
-                    else: p2 = (p1[0], p2[1])       # 세로선으로 보정
+                    if dx > dy: p2 = (p2[0], p1[1])
+                    else: p2 = (p1[0], p2[1])
 
                 if p1 == p2: continue
-                
                 msp.add_line((p1[0], p1[1], 0), (p2[0], p2[1], 0), dxfattribs={'layer': 'WALL_2D'})
                 
                 if enable_3d:
@@ -113,7 +111,6 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
                             msp.add_line((p[0], p[1], 0), (p[0], p[1], wall_height_mm), dxfattribs={'layer': 'VERT_COL'})
                             v_columns.add(p)
                     msp.add_line((p1[0], p1[1], wall_height_mm), (p2[0], p2[1], wall_height_mm), dxfattribs={'layer': 'CEIL_LINE'})
-                    
                     plot_x.extend([p1[0], p2[0], p2[0], p1[0], p1[0], None])
                     plot_y.extend([p1[1], p2[1], p2[1], p1[1], p1[1], None])
                     plot_z.extend([0, 0, wall_height_mm, wall_height_mm, 0, None])
@@ -128,7 +125,7 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
 
     return doc, plot_x, plot_y, plot_z
 
-# --- Streamlit UI ---
+# --- UI ---
 st.title("📐 Professional Sketch to DXF")
 
 with st.sidebar:
@@ -156,11 +153,11 @@ if uploaded:
     bytes_data = uploaded.read()
     col1, col2 = st.columns(2)
     
-    # [에러 해결 지점] 파라미터를 use_column_width=True 로 고정하여 호환성 확보
+    # [핵심 수정] 에러가 났던 부분을 가장 안전한 구형 문법으로 교체
     col1.image(bytes_data, caption="원본 이미지", use_column_width=True)
 
     with st.spinner("AI 분석 및 수정 반영 중..."):
-        res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_val, user_comment)
+        res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_strength=filter_val, user_instruction=user_comment)
         
         if res:
             doc, px, py, pz = res
