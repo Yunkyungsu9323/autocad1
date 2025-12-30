@@ -28,8 +28,10 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     
     h, w, _ = img_bgr.shape
     
-    # 스케일 결정
+    # 기본 스케일링
     final_scale = real_width_mm / w if real_width_mm > 0 else 1.0
+    
+    # [AI 수정 반영 1: 크기]
     if "크게" in user_instruction:
         final_scale *= 1.2
 
@@ -48,7 +50,7 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     binary = cv2.dilate(binary, kernel, iterations=1)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
-    # 3. OCR (텍스트 인식 및 선 제외)
+    # 3. OCR (텍스트 인식 및 영역 제외)
     reader = load_ocr_reader()
     detected_texts = []
     if reader:
@@ -77,8 +79,8 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     plot_x, plot_y, plot_z = [], [], []
     v_columns = set()
 
-    # 직각 보정 모드 체크
-    ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯"])
+    # [AI 수정 반영 2: 직각 보정]
+    ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯", "똑바로"])
 
     def get_snap(pt):
         if snap_size == 0: return pt
@@ -153,10 +155,11 @@ if uploaded:
     bytes_data = uploaded.read()
     col1, col2 = st.columns(2)
     
-    # [에러 해결 지점] 파라미터 이름을 use_column_width=True로 변경하여 하위 호환성 확보
+    # [가장 중요한 수정 지점] 에러의 원인인 파라미터 명칭을 호환용 구형 문법으로 교체
     col1.image(bytes_data, caption="원본 이미지", use_column_width=True)
 
     with st.spinner("AI 분석 중..."):
+        # filter_strength와 user_instruction을 명확하게 인자로 전달
         res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_val, user_comment)
         
         if res:
@@ -170,5 +173,5 @@ if uploaded:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
                 doc.saveas(tmp.name)
                 with open(tmp.name, "rb") as f:
-                    st.download_button("📥 DXF 다운로드", f, "final.dxf", use_container_width=True)
+                    st.download_button("📥 DXF 다운로드", f, "final_plan.dxf", use_container_width=True)
             os.unlink(tmp.name)
