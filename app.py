@@ -28,14 +28,10 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     
     h, w, _ = img_bgr.shape
     
-    # [사용자 코멘트 반영 1: 크기 조정]
+    # [수정 요청 반영: 스케일 조정]
     final_scale = real_width_mm / w if real_width_mm > 0 else 1.0
     if "배 키워" in user_instruction or "배 크게" in user_instruction:
-        try:
-            # "1.5배 키워줘" 같은 문구에서 숫자 추출 시도 (기본값 1.2배)
-            multiplier = 1.2
-            final_scale *= multiplier
-        except: pass
+        final_scale *= 1.2  # 기본 1.2배 확대
 
     # 2. 스마트 컬러 필터 (격자무늬 제거)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
@@ -52,7 +48,7 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     binary = cv2.dilate(binary, kernel, iterations=1)
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
-    # 3. OCR (텍스트 제외)
+    # 3. OCR (텍스트 인식 및 선 제외)
     reader = load_ocr_reader()
     detected_texts = []
     if reader:
@@ -81,8 +77,8 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     plot_x, plot_y, plot_z = [], [], []
     v_columns = set()
 
-    # [사용자 코멘트 반영 2: 직각 보정 강도]
-    ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯하게"])
+    # [수정 요청 반영: 직각 보정 모드 체크]
+    ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯하게", "똑바로"])
 
     def get_snap(pt):
         if snap_size == 0: return pt
@@ -100,12 +96,11 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
             for i in range(len(pts)-1):
                 p1, p2 = pts[i], pts[i+1]
                 
-                # [직각 보정 로직] 사용자가 "직각으로" 요청 시 선을 수평/수직으로 강제 정렬
                 if ortho_mode:
                     dx = abs(p1[0] - p2[0])
                     dy = abs(p1[1] - p2[1])
-                    if dx > dy: p2 = (p2[0], p1[1]) # 수평선화
-                    else: p2 = (p1[0], p2[1])       # 수직선화
+                    if dx > dy: p2 = (p2[0], p1[1]) # 가로선으로 보정
+                    else: p2 = (p1[0], p2[1])       # 세로선으로 보정
 
                 if p1 == p2: continue
                 
@@ -146,9 +141,8 @@ with st.sidebar:
     wall_h = st.number_input("벽 높이", value=2400, disabled=not enable_3d)
     
     st.divider()
-    st.header("3. AI 수정 요청 (Natural Language)")
-    # 여기에 코멘트를 남기면 분석 로직에 반영됩니다.
-    user_comment = st.text_input("수정 사항 입력:", placeholder="예: '직각으로 펴줘', '크게 그려줘'")
+    st.header("3. AI 수정 요청")
+    user_comment = st.text_input("수정 사항 입력:", placeholder="예: '직각으로 펴줘'")
     
     st.divider()
     st.header("4. 벡터화 옵션")
@@ -160,10 +154,14 @@ uploaded = st.file_uploader("이미지 파일 업로드", type=['png', 'jpg', 'j
 if uploaded:
     bytes_data = uploaded.read()
     col1, col2 = st.columns(2)
-    col1.image(bytes_data, caption="원본 이미지", use_container_width=True)
+    
+    # st.image 에러 방지를 위한 호환성 처리
+    try:
+        col1.image(bytes_data, caption="원본 이미지", use_container_width=True)
+    except TypeError:
+        col1.image(bytes_data, caption="원본 이미지", use_column_width=True)
 
-    with st.spinner("사용자 요청 반영 중..."):
-        # user_comment를 함수 인자로 전달
+    with st.spinner("AI 분석 및 수정 반영 중..."):
         res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_val, user_comment)
         
         if res:
@@ -178,5 +176,5 @@ if uploaded:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
                 doc.saveas(tmp.name)
                 with open(tmp.name, "rb") as f:
-                    st.download_button("📥 수정 반영된 DXF 다운로드", f, "pro_plan_edited.dxf", use_container_width=True)
+                    st.download_button("📥 DXF 다운로드", f, "pro_plan_final.dxf", use_container_width=True)
             os.unlink(tmp.name)
