@@ -28,9 +28,9 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     
     h, w, _ = img_bgr.shape
     
-    # [수정 요청 반영: 스케일 조정]
+    # 스케일 결정
     final_scale = real_width_mm / w if real_width_mm > 0 else 1.0
-    if "배 키워" in user_instruction or "배 크게" in user_instruction:
+    if "크게" in user_instruction:
         final_scale *= 1.2
 
     # 2. 스마트 컬러 필터 (격자무늬 제거)
@@ -77,8 +77,8 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
     plot_x, plot_y, plot_z = [], [], []
     v_columns = set()
 
-    # [수정 요청 반영: 직각 보정]
-    ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯하게", "똑바로"])
+    # 직각 보정 모드 체크
+    ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯"])
 
     def get_snap(pt):
         if snap_size == 0: return pt
@@ -153,23 +153,22 @@ if uploaded:
     bytes_data = uploaded.read()
     col1, col2 = st.columns(2)
     
-    # [핵심 수정] 에러가 났던 부분을 가장 안전한 구형 문법으로 교체
+    # [에러 해결 지점] 파라미터 이름을 use_column_width=True로 변경하여 하위 호환성 확보
     col1.image(bytes_data, caption="원본 이미지", use_column_width=True)
 
-    with st.spinner("AI 분석 및 수정 반영 중..."):
-        res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_strength=filter_val, user_instruction=user_comment)
+    with st.spinner("AI 분석 중..."):
+        res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_val, user_comment)
         
         if res:
             doc, px, py, pz = res
             fig = go.Figure(go.Scatter3d(x=px, y=py, z=pz, mode='lines', 
-                                         line=dict(color='#00ffcc' if enable_3d else '#ffffff', width=2)))
-            fig.update_layout(scene=dict(aspectmode='data', bgcolor='black'), 
-                              paper_bgcolor='black', margin=dict(l=0,r=0,b=0,t=0))
+                                         line=dict(color='#00ffcc', width=2)))
+            fig.update_layout(scene=dict(aspectmode='data', bgcolor='black'), paper_bgcolor='black', margin=dict(l=0,r=0,b=0,t=0))
             
             col2.plotly_chart(fig, use_container_width=True)
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
                 doc.saveas(tmp.name)
                 with open(tmp.name, "rb") as f:
-                    st.download_button("📥 DXF 다운로드", f, "pro_plan_final.dxf", use_container_width=True)
+                    st.download_button("📥 DXF 다운로드", f, "final.dxf", use_container_width=True)
             os.unlink(tmp.name)
