@@ -67,8 +67,6 @@ def process_sketch_ai_engine(image_bytes, real_width_mm, wall_height_mm, user_in
 # --- [UI 레이아웃] ---
 st.title("📐 AI Sketch to DXF Pro")
 
-# 2. 수정 명령 섹션 (사용자님이 말씀하신 입력창 자리에 버튼 배치)
-st.write("### 🤖 수정 명령")
 
 # [핵심 수정] st.text_input(타자치기)을 아예 삭제하고 버튼 6개를 가로로 배치
 cmd_cols = st.columns(6)
