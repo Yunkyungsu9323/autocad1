@@ -31,7 +31,7 @@ def process_sketch_ai_engine(image_bytes, real_width_mm, wall_height_mm, snap_si
     ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯", "똑바로"])
     thick_mode = any(word in user_instruction for word in ["두께", "두껍게", "벽체"])
 
-    # 격자 제거 전처리
+    # 전처리
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     binary = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, filter_strength]))
     grid_mask = cv2.inRange(hsv, np.array([75, 20, 150]), np.array([135, 120, 255]))
@@ -80,38 +80,37 @@ def process_sketch_ai_engine(image_bytes, real_width_mm, wall_height_mm, snap_si
 # --- UI 레이아웃 ---
 st.title("📐 AI Sketch to DXF Pro")
 
-# 1. AI 기능 안내 (배너 형태)
-st.success("""
-**🤖 AI에게 요청해보세요!** 명령창에 아래 키워드를 포함하면 도면이 자동으로 보정됩니다.
-- **[직각]**: 삐뚤한 선을 반듯하게 정렬 
-- **[깔끔]**: 자잘한 잡티 제거 
-- **[연결]**: 끊어진 선 이어붙이기 
-- **[두께]**: 단선을 두꺼운 벽체로 변경 
-- **[세밀]**: 작은 디테일 살리기 
-- **[확대]**: 전체 크기 1.5배 키우기
-""")
+# 1. 시각적 명령어 가이드 (사용자가 바로 보고 따라할 수 있게)
+st.subheader("🤖 AI 명령어 가이드")
+cols = st.columns(3)
+with cols[0]:
+    st.info("**📏 정교한 도면**\n- '직각으로 반듯하게'\n- '끊어진 선 다 연결해줘'")
+with cols[1]:
+    st.info("**🧹 깔끔한 결과**\n- '잡티 다 지우고 깔끔하게'\n- '벽체 두께 200mm 줘'")
+with cols[2]:
+    st.info("**🔍 상세 인식**\n- '작은 디테일까지 세밀하게'\n- '도면 1.5배로 확대해줘'")
 
 with st.sidebar:
-    st.header("⚙️ 하드웨어 설정")
+    st.header("⚙️ 기본 설정")
     real_w = st.number_input("도면 가로폭 (mm)", value=10000)
     wall_h = st.number_input("벽체 높이 (mm)", value=2400)
     
     st.divider()
-    st.header("🤖 AI 수정 명령")
-    user_comment = st.text_input("명령 입력 (예: 직각으로 깔끔하게)", placeholder="여기에 입력 후 엔터")
+    st.header("✍️ AI 수정 명령")
+    # 사용자가 명령을 입력하는 곳
+    user_comment = st.text_input("위에 있는 가이드를 참고해서 입력하세요:", placeholder="예: 직각으로 깔끔하게")
     
     st.divider()
-    st.header("🔧 고급 튜닝")
+    st.header("🔧 수동 미세 조정")
     filter_val = st.slider("민감도", 50, 255, 160)
     snap = st.selectbox("스냅(mm)", [1, 5, 10, 50], index=2)
-    eps = st.slider("직선화", 0.001, 0.050, 0.015)
 
-uploaded = st.file_uploader("도면 업로드", type=['png', 'jpg', 'jpeg'])
+uploaded = st.file_uploader("이미지 파일 업로드", type=['png', 'jpg', 'jpeg'])
 
 if uploaded:
     bytes_data = uploaded.read()
-    with st.spinner("AI 엔진 가동 중..."):
-        res = process_sketch_ai_engine(bytes_data, real_w, wall_h, snap, eps, filter_val, user_comment)
+    with st.spinner("AI가 명령을 분석하여 도면을 생성 중입니다..."):
+        res = process_sketch_ai_engine(bytes_data, real_w, wall_h, snap, 0.015, filter_val, user_comment)
         if res:
             doc, px_d, py_d, pz_d, img_rgb = res
             c1, c2 = st.columns(2)
@@ -121,12 +120,12 @@ if uploaded:
                 fig_img.update_layout(margin=dict(l=0,r=0,b=0,t=0), xaxis_visible=False, yaxis_visible=False)
                 st.plotly_chart(fig_img, use_container_width=True)
             with c2:
-                st.write("🏗️ AI 벡터화 결과")
+                st.write("🏗️ AI 결과물")
                 fig_3d = go.Figure(go.Scatter3d(x=px_d, y=py_d, z=pz_d, mode='lines', line=dict(color='#00ffcc', width=2)))
                 fig_3d.update_layout(scene=dict(aspectmode='data', bgcolor='black'), paper_bgcolor='black', margin=dict(l=0,r=0,b=0,t=0))
                 st.plotly_chart(fig_3d, use_container_width=True)
                 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
                     doc.saveas(tmp.name)
-                    st.download_button("📥 AI 보정된 DXF 다운로드", open(tmp.name, "rb"), "ai_drawing.dxf", use_container_width=True)
+                    st.download_button("📥 DXF 다운로드", open(tmp.name, "rb"), "output.dxf", use_container_width=True)
                 os.unlink(tmp.name)
