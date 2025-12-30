@@ -1,9 +1,7 @@
 streamlit==1.38.0
-streamlit-drawable-canvas==0.9.3
 opencv-contrib-python-headless
 numpy
 ezdxf
 plotly
 easyocr
 Pillow
-pandas
