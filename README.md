@@ -2,9 +2,3 @@
 
 현장 스케치 이미지를 업로드하면  
 기본 설계 초안을 생성하는 Streamlit 웹 앱입니다.
-
-## 실행 방법 (로컬)
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
