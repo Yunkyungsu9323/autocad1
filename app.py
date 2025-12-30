@@ -19,17 +19,17 @@ def process_sketch_ai_engine(image_bytes, real_width_mm, wall_height_mm, snap_si
     
     # --- [AI 엔진 핵심 로직] ---
     final_scale = real_width_mm / w if real_width_mm > 0 else 1.0
-    if any(word in user_instruction for word in ["크게", "확대", "배 키워"]): final_scale *= 1.5
+    if "확대" in user_instruction: final_scale *= 1.5
     
     cleanup_val = 40
-    if any(word in user_instruction for word in ["깔끔", "지워", "청소", "노이즈"]): cleanup_val = 200
-    if any(word in user_instruction for word in ["세밀", "디테일", "작은"]): cleanup_val = 5
+    if any(word in user_instruction for word in ["깔끔", "지워"]): cleanup_val = 200
+    if any(word in user_instruction for word in ["세밀", "디테일"]): cleanup_val = 5
     
     snap_engine = snap_size
-    if any(word in user_instruction for word in ["연결", "붙여", "이어줘"]): snap_engine = snap_size * 2.5
+    if any(word in user_instruction for word in ["연결", "붙여"]): snap_engine = snap_size * 2.5
     
-    ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯", "똑바로"])
-    thick_mode = any(word in user_instruction for word in ["두께", "두껍게", "벽체"])
+    ortho_mode = any(word in user_instruction for word in ["직각", "반듯"])
+    thick_mode = "두께" in user_instruction
 
     # 전처리
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
@@ -80,15 +80,20 @@ def process_sketch_ai_engine(image_bytes, real_width_mm, wall_height_mm, snap_si
 # --- UI 레이아웃 ---
 st.title("📐 AI Sketch to DXF Pro")
 
-# 1. 시각적 명령어 가이드 (사용자가 바로 보고 따라할 수 있게)
-st.subheader("🤖 AI 명령어 가이드")
-cols = st.columns(3)
-with cols[0]:
-    st.info("**📏 정교한 도면**\n- '직각으로 반듯하게'\n- '끊어진 선 다 연결해줘'")
-with cols[1]:
-    st.info("**🧹 깔끔한 결과**\n- '잡티 다 지우고 깔끔하게'\n- '벽체 두께 200mm 줘'")
-with cols[2]:
-    st.info("**🔍 상세 인식**\n- '작은 디테일까지 세밀하게'\n- '도면 1.5배로 확대해줘'")
+# 세션 상태 초기화 (버튼 클릭 값 유지용)
+if "cmd" not in st.session_state:
+    st.session_state.cmd = ""
+
+# 1. 클릭형 명령어 버튼 섹션
+st.subheader("🤖 원클릭 AI 보정")
+btn_cols = st.columns(6)
+
+if btn_cols[0].button("📏 직각 보정"): st.session_state.cmd = "직각으로 반듯하게"
+if btn_cols[1].button("🧹 잡티 제거"): st.session_state.cmd = "깔끔하게 지워줘"
+if btn_cols[2].button("적 선 연결"): st.session_state.cmd = "끊어진 선 연결해줘"
+if btn_cols[3].button("🧱 벽체 두께"): st.session_state.cmd = "벽체 두께 생성"
+if btn_cols[4].button("🔍 세밀 인식"): st.session_state.cmd = "세밀하게 디테일 살려줘"
+if btn_cols[5].button("🔄 초기화"): st.session_state.cmd = ""
 
 with st.sidebar:
     st.header("⚙️ 기본 설정")
@@ -96,31 +101,27 @@ with st.sidebar:
     wall_h = st.number_input("벽체 높이 (mm)", value=2400)
     
     st.divider()
-    st.header("✍️ AI 수정 명령")
-    # 사용자가 명령을 입력하는 곳
-    user_comment = st.text_input("위에 있는 가이드를 참고해서 입력하세요:", placeholder="예: 직각으로 깔끔하게")
-    
-    st.divider()
-    st.header("🔧 수동 미세 조정")
-    filter_val = st.slider("민감도", 50, 255, 160)
-    snap = st.selectbox("스냅(mm)", [1, 5, 10, 50], index=2)
+    st.header("✍️ 현재 적용된 명령")
+    # 버튼 클릭 시 반영된 명령어가 여기에 표시됨 (직접 수정도 가능)
+    user_comment = st.text_input("AI가 이해한 내용:", value=st.session_state.cmd)
+    st.caption("버튼을 누르거나 직접 타이핑하여 명령을 내리세요.")
 
 uploaded = st.file_uploader("이미지 파일 업로드", type=['png', 'jpg', 'jpeg'])
 
 if uploaded:
     bytes_data = uploaded.read()
-    with st.spinner("AI가 명령을 분석하여 도면을 생성 중입니다..."):
-        res = process_sketch_ai_engine(bytes_data, real_w, wall_h, snap, 0.015, filter_val, user_comment)
+    with st.spinner(f"AI가 '{user_comment}' 명령을 수행 중입니다..."):
+        res = process_sketch_ai_engine(bytes_data, real_w, wall_h, 10, 0.015, 160, user_comment)
         if res:
             doc, px_d, py_d, pz_d, img_rgb = res
             c1, c2 = st.columns(2)
             with c1:
-                st.write("🔍 원본 분석")
+                st.write("🔍 분석된 원본 이미지")
                 fig_img = px.imshow(img_rgb)
                 fig_img.update_layout(margin=dict(l=0,r=0,b=0,t=0), xaxis_visible=False, yaxis_visible=False)
                 st.plotly_chart(fig_img, use_container_width=True)
             with c2:
-                st.write("🏗️ AI 결과물")
+                st.write("🏗️ AI 벡터화 프리뷰")
                 fig_3d = go.Figure(go.Scatter3d(x=px_d, y=py_d, z=pz_d, mode='lines', line=dict(color='#00ffcc', width=2)))
                 fig_3d.update_layout(scene=dict(aspectmode='data', bgcolor='black'), paper_bgcolor='black', margin=dict(l=0,r=0,b=0,t=0))
                 st.plotly_chart(fig_3d, use_container_width=True)
