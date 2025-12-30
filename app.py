@@ -2,73 +2,49 @@ import streamlit as st
 import cv2
 import numpy as np
 import ezdxf
-from ezdxf.enums import TextEntityAlignment
 import plotly.graph_objects as go
+import plotly.express as px
 import tempfile
 import os
-import easyocr
 
-# 페이지 설정
+# 1. 페이지 설정
 st.set_page_config(page_title="Sketch to DXF Pro", layout="wide")
 
-# 1. 메모리 세이프 OCR 로더
-@st.cache_resource
-def load_ocr_reader():
-    try:
-        return easyocr.Reader(['en'], gpu=False, download_enabled=True)
-    except Exception as e:
-        st.warning(f"OCR 엔진 로딩 지연 중: {e}")
-        return None
-
-def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, epsilon_adj, enable_3d, filter_strength, user_instruction=""):
+def process_sketch_final(image_bytes, real_width_mm, wall_height_mm, snap_size, epsilon_adj, filter_strength, user_instruction=""):
+    # 이미지 로드
     file_bytes = np.asarray(bytearray(image_bytes), dtype=np.uint8)
     img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     if img_bgr is None: return None
     
     h, w, _ = img_bgr.shape
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    
+    # 스케일 결정
     final_scale = real_width_mm / w if real_width_mm > 0 else 1.0
-    if "크게" in user_instruction:
-        final_scale *= 1.2
+    if "크게" in user_instruction: final_scale *= 1.2
 
+    # 2. 격자 제거 및 이진화
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     binary = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, filter_strength]))
     grid_mask = cv2.inRange(hsv, np.array([75, 20, 150]), np.array([135, 120, 255]))
     binary = cv2.subtract(binary, grid_mask)
     binary = cv2.dilate(binary, np.ones((2,2), np.uint8), iterations=1)
 
-    reader = load_ocr_reader()
-    detected_texts = []
-    if reader:
-        try:
-            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-            ocr_results = reader.readtext(gray)
-            for (bbox, text, prob) in ocr_results:
-                if prob < 0.3: continue
-                pts = np.array(bbox, dtype=np.int32)
-                cv2.fillPoly(binary, [pts], (0))
-                cx = np.mean(pts[:, 0]) * final_scale
-                cy = (h - np.mean(pts[:, 1])) * final_scale
-                detected_texts.append({'text': text, 'x': cx, 'y': cy, 'h': (pts[2][1]-pts[0][1])*final_scale})
-        except: pass
-
-    contours, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    # 3. DXF 및 시각화 데이터 준비
     doc = ezdxf.new('R2010')
     msp = doc.modelspace()
-    doc.layers.add("WALL_2D", color=7)
-    if enable_3d:
-        doc.layers.add("VERT_COL", color=2)
-        doc.layers.add("CEIL_LINE", color=3)
-
-    plot_x, plot_y, plot_z = [], [], []
-    v_columns = set()
+    px_list, py_list, pz_list = [], [], []
+    v_cols = set()
     ortho_mode = any(word in user_instruction for word in ["직각", "수직", "반듯"])
 
     def get_snap(pt):
         if snap_size == 0: return pt
         return (round(pt[0]/snap_size)*snap_size, round(pt[1]/snap_size)*snap_size)
 
+    # 4. 윤곽선 분석
+    contours, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     for cnt in contours:
-        if cv2.contourArea(cnt) < 40: continue 
+        if cv2.contourArea(cnt) < 40: continue
         approx = cv2.approxPolyDP(cnt, epsilon_adj * cv2.arcLength(cnt, True), True)
         pts = [get_snap((p[0][0]*final_scale, (h-p[0][1])*final_scale)) for p in approx]
         
@@ -77,58 +53,65 @@ def process_sketch_pro(image_bytes, real_width_mm, wall_height_mm, snap_size, ep
             for i in range(len(pts)-1):
                 p1, p2 = pts[i], pts[i+1]
                 if ortho_mode:
-                    dx, dy = abs(p1[0] - p2[0]), abs(p1[1] - p2[1])
-                    if dx > dy: p2 = (p2[0], p1[1])
-                    else: p2 = (p1[0], p2[1])
+                    dx, dy = abs(p1[0]-p2[0]), abs(p1[1]-p2[1])
+                    p2 = (p2[0], p1[1]) if dx > dy else (p1[0], p2[1])
                 if p1 == p2: continue
-                msp.add_line((p1[0], p1[1], 0), (p2[0], p2[1], 0), dxfattribs={'layer': 'WALL_2D'})
-                if enable_3d:
-                    for p in [p1, p2]:
-                        if p not in v_columns:
-                            msp.add_line((p[0], p[1], 0), (p[0], p[1], wall_height_mm), dxfattribs={'layer': 'VERT_COL'})
-                            v_columns.add(p)
-                    msp.add_line((p1[0], p1[1], wall_height_mm), (p2[0], p2[1], wall_height_mm), dxfattribs={'layer': 'CEIL_LINE'})
-                    plot_x.extend([p1[0], p2[0], p2[0], p1[0], p1[0], None])
-                    plot_y.extend([p1[1], p2[1], p2[1], p1[1], p1[1], None])
-                    plot_z.extend([0, 0, wall_height_mm, wall_height_mm, 0, None])
-                else:
-                    plot_x.extend([p1[0], p2[0], None]); plot_y.extend([p1[1], p2[1], None]); plot_z.extend([0, 0, None])
+                
+                msp.add_line((p1[0], p1[1], 0), (p2[0], p2[1], 0))
+                # 3D 벽체 데이터 생성
+                for pt in [p1, p2]:
+                    if pt not in v_cols:
+                        msp.add_line((pt[0], pt[1], 0), (pt[0], pt[1], wall_height_mm))
+                        v_cols.add(pt)
+                msp.add_line((p1[0], p1[1], wall_height_mm), (p2[0], p2[1], wall_height_mm))
+                
+                # 시각화용 데이터
+                px_list.extend([p1[0], p2[0], p2[0], p1[0], p1[0], None])
+                py_list.extend([p1[1], p2[1], p2[1], p1[1], p1[1], None])
+                pz_list.extend([0, 0, wall_height_mm, wall_height_mm, 0, None])
 
-    for dt in detected_texts:
-        t = msp.add_text(dt['text'], dxfattribs={'height': dt['h']*0.8, 'color': 1})
-        t.set_placement((dt['x'], dt['y'], 0), align=TextEntityAlignment.MIDDLE_CENTER)
-    return doc, plot_x, plot_y, plot_z
+    return doc, px_list, py_list, pz_list, img_rgb
 
-# --- UI ---
-st.title("📐 Professional Sketch to DXF")
+# --- UI 레이아웃 ---
+st.title("📐 Sketch to DXF Pro (No-Error Version)")
 
 with st.sidebar:
-    enable_3d = st.checkbox("3D 벽체 세우기", value=True)
-    filter_val = st.slider("인식 민감도", 50, 255, 160)
-    real_w = st.number_input("도면 실제 가로 폭", value=10000)
-    wall_h = st.number_input("벽 높이", value=2400)
-    user_comment = st.text_input("수정 사항 입력:", placeholder="예: 직각으로")
-    eps = st.slider("직선화 강도", 0.001, 0.050, 0.015)
-    snap = st.selectbox("그리드 스냅 (mm)", [0, 1, 5, 10, 50], index=2)
+    st.header("설정")
+    real_w = st.number_input("가로폭(mm)", value=10000)
+    wall_h = st.number_input("벽높이(mm)", value=2400)
+    user_comment = st.text_input("수정 명령", placeholder="예: 직각으로")
+    filter_val = st.slider("민감도", 50, 255, 160)
+    snap = st.selectbox("그리드 스냅", [1, 5, 10, 50], index=2)
+    eps = st.slider("직선화", 0.001, 0.050, 0.015)
 
-uploaded = st.file_uploader("이미지 파일 업로드", type=['png', 'jpg', 'jpeg'])
+uploaded = st.file_uploader("이미지 업로드", type=['png', 'jpg', 'jpeg'])
 
 if uploaded:
     bytes_data = uploaded.read()
-    col1, col2 = st.columns(2)
     
-    # [극약처방] 에러의 주범인 모든 파라미터를 제거하고 가장 원시적인 방법으로 출력
-    col1.image(bytes_data) 
-
-    with st.spinner("AI 분석 중..."):
-        res = process_sketch_pro(bytes_data, real_w, wall_h, snap, eps, enable_3d, filter_val, user_comment)
+    with st.spinner("이미지 분석 중..."):
+        res = process_sketch_final(bytes_data, real_w, wall_h, snap, eps, filter_val, user_comment)
+        
         if res:
-            doc, px, py, pz = res
-            fig = go.Figure(go.Scatter3d(x=px, y=py, z=pz, mode='lines', line=dict(color='#00ffcc', width=2)))
-            fig.update_layout(scene=dict(aspectmode='data', bgcolor='black'), paper_bgcolor='black', margin=dict(l=0,r=0,b=0,t=0))
-            col2.plotly_chart(fig, use_container_width=True)
+            doc, px_data, py_data, pz_data, img_rgb = res
+            col1, col2 = st.columns(2)
             
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
-                doc.saveas(tmp.name)
-                st.download_button("📥 DXF 다운로드", open(tmp.name, "rb"), "final.dxf")
-            os.unlink(tmp.name)
+            with col1:
+                st.write("### 원본 이미지 (Plotly View)")
+                # st.image 대신 Plotly로 이미지 표시 (TypeError 원천 차단)
+                fig_img = px.imshow(img_rgb)
+                fig_img.update_layout(margin=dict(l=0,r=0,b=0,t=0), xaxis_visible=False, yaxis_visible=False)
+                st.plotly_chart(fig_img, use_container_width=True)
+
+            with col2:
+                st.write("### 3D 벡터 프리뷰")
+                fig_3d = go.Figure(go.Scatter3d(x=px_data, y=py_data, z=pz_data, mode='lines', line=dict(color='#00ffcc', width=2)))
+                fig_3d.update_layout(scene=dict(aspectmode='data', bgcolor='black'), paper_bgcolor='black', margin=dict(l=0,r=0,b=0,t=0))
+                st.plotly_chart(fig_3d, use_container_width=True)
+                
+                # DXF 다운로드
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
+                    doc.saveas(tmp.name)
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("📥 DXF 다운로드", f, file_name="output.dxf")
+                os.unlink(tmp.name)
