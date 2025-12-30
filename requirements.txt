@@ -4,3 +4,6 @@ numpy
 ezdxf
 plotly
 easyocr
+streamlit-drawable-canvas
+Pillow
+pandas
